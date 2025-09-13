@@ -1,1 +1,0 @@
-# logogeneration2
