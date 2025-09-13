@@ -1,0 +1,444 @@
+📁 Структура проекта:
+
+ - bot.py
+ - config.py
+ - keyboards.py
+ - test.py
+ - tree.py
+ - handlers\generation.py
+ - handlers\info.py
+ - handlers\prompt.py
+ - handlers\start.py
+ - handlers\vectorize.py
+ - handlers\__init__.py
+ - services\logo_generator.py
+ - services\__init__.py
+ - utils\states.py
+ - utils\user_state.py
+ - utils\__init__.py
+
+📄 Содержимое файлов:
+
+
+🔹 bot.py:
+------------------------------------------------------------
+import logging
+import asyncio
+from aiogram import Bot, Dispatcher
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
+from aiogram.filters import CommandStart
+from aiogram.fsm.storage.memory import MemoryStorage  # <- ВАЖНО: добавьте это
+from config import TELEGRAM_BOT_TOKEN
+from handlers import start, info, prompt, generation, vectorize
+from utils.user_state import get_user_state, STATE_GENERATE, STATE_VECTORIZE, STATE_MENU
+
+logging.basicConfig(level=logging.INFO)
+logging.getLogger("aiogram.event").setLevel(logging.DEBUG)
+
+defaults = DefaultBotProperties(parse_mode=ParseMode.HTML)
+bot = Bot(token=TELEGRAM_BOT_TOKEN, default=defaults)
+dp = Dispatcher(storage=MemoryStorage())
+
+def is_generate_text(message):
+    return (
+        message.text and not message.text.startswith("/")
+        and get_user_state(message.from_user.id) == STATE_GENERATE
+    )
+
+def is_vectorization_photo(message):
+    return (
+        message.photo
+        and get_user_state(message.from_user.id) == STATE_VECTORIZE
+    )
+
+dp.message.register(start.start, CommandStart())
+dp.message.register(start.start, lambda m: m.text == "⬅️ В меню")
+dp.message.register(info.info, lambda m: m.text == "ℹ️ Информация")
+dp.message.register(prompt.prompt_for_idea, lambda m: m.text == "🎨 Генерация логотипа")
+dp.message.register(vectorize.ask_for_image, lambda m: m.text == "🖼 Векторизация")
+dp.message.register(vectorize.handle_vectorization_image, is_vectorization_photo)
+dp.message.register(generation.handle_idea, is_generate_text)
+
+@dp.message()
+async def fallback_handler(message):
+    state = get_user_state(message.from_user.id)
+    if state == STATE_MENU:
+        await message.answer("❗️Вы сейчас в главном меню. Пожалуйста, выберите действие кнопкой ниже.")
+    elif state == STATE_GENERATE:
+        await message.answer("❗️Ожидается текстовая идея логотипа.")
+    elif state == STATE_VECTORIZE:
+        await message.answer("❗️Ожидается изображение (фото) для векторизации.")
+    else:
+        await message.answer("❓ Непонятное состояние. Нажмите '⬅️ В меню'.")
+
+if __name__ == "__main__":
+    asyncio.run(dp.start_polling(bot))
+
+
+🔹 config.py:
+------------------------------------------------------------
+import os
+from dotenv import load_dotenv
+
+# Загружаем переменные из .env
+load_dotenv()
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+# Приводим к булевому значению (true → True, все остальное → False)
+USE_PLACEHOLDER = os.getenv("USE_PLACEHOLDER", "false").strip().lower() == "true"
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+
+🔹 keyboards.py:
+------------------------------------------------------------
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+
+def get_main_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🎨 Генерация логотипа")],
+            [KeyboardButton(text="🖼 Векторизация")],
+            [KeyboardButton(text="ℹ️ Информация")],
+        ],
+        resize_keyboard=True
+    )
+
+def get_back_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="⬅️ В меню")],
+        ],
+        resize_keyboard=True
+    )
+
+
+🔹 test.py:
+------------------------------------------------------------
+import requests
+import os
+from dotenv import load_dotenv
+
+# Загружаем переменные окружения из .env файла
+load_dotenv()
+
+# Получаем логин и пароль из .env
+user = os.getenv('VECTORIZE_USER')
+password = os.getenv('VECTORIZE_PASS')
+
+# Отправляем запрос
+response = requests.post(
+    'https://ru.vectorizer.ai/api/v1/vectorize',
+    files={'image': open('image.jpg', 'rb')},
+    data={'mode': 'test'},
+    auth=(user, password)
+)
+
+# Обработка результата
+if response.status_code == requests.codes.ok:
+    with open('result.svg', 'wb') as out:
+        out.write(response.content)
+else:
+    print("Error:", response.status_code, response.text)
+
+🔹 tree.py:
+------------------------------------------------------------
+import os
+
+IGNORE_DIRS = {"__pycache__", ".git", "venv", ".venv", "env", ".idea", ".mypy_cache", ".vscode"}
+IGNORE_FILES = {".env"}
+
+def list_files(base_path="."):
+    summary = []
+
+    for root, dirs, files in os.walk(base_path):
+        # Игнорируем ненужные папки
+        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+        files = [f for f in files if f.endswith(".py") and f not in IGNORE_FILES]
+
+        # Строим "относительный путь"
+        rel_root = os.path.relpath(root, base_path)
+        for f in files:
+            path = os.path.join(rel_root, f) if rel_root != "." else f
+            summary.append(path)
+
+    return summary
+
+def print_project_structure(base_path="."):
+    print("📁 Структура проекта:\n")
+    for path in list_files(base_path):
+        print(f" - {path}")
+    print("\n📄 Содержимое файлов:\n")
+
+    for path in list_files(base_path):
+        print(f"\n🔹 {path}:\n{'-'*60}")
+        with open(os.path.join(base_path, path), "r", encoding="utf-8") as f:
+            print(f.read())
+
+if __name__ == "__main__":
+    import sys
+    with open('tree.txt', "w", encoding="utf-8") as f:
+        sys.stdout = f  # перенаправляем print в файл
+        print_project_structure()
+
+
+🔹 handlers\generation.py:
+------------------------------------------------------------
+from aiogram import types
+from aiogram.fsm.context import FSMContext
+from utils.states import GenerationStates
+from utils.user_state import single_user_lock, is_generating, set_generating
+from services.logo_generator import generate_image
+from aiogram.types import BufferedInputFile
+import logging
+
+async def handle_idea(message: types.Message, state: FSMContext):
+    state_now = await state.get_state()
+
+    if state_now != GenerationStates.waiting_for_idea:
+        return  # Игнорируем, если пользователь не в нужном режиме
+
+    user_id = message.from_user.id
+
+    if not message.text:
+        await message.answer("❗️Ожидается текст с идеей логотипа. Пожалуйста, напишите словами.")
+        return
+
+    if is_generating(user_id):
+        await message.answer("⏳ Пожалуйста, дождитесь завершения генерации логотипа.")
+        return
+
+    async with single_user_lock(user_id):
+        set_generating(user_id, True)
+        await message.answer("Генерирую логотип, подожди немного...")
+        try:
+            image = await generate_image(message.text)
+            image.seek(0)
+            input_file = BufferedInputFile(file=image.read(), filename="logo.png")
+            await message.answer_photo(photo=input_file, caption="Вот логотип по твоей идее!")
+            await message.answer("💡 Пришли ещё идею или нажми '⬅️ В меню'.")
+        except Exception as e:
+            logging.exception("Ошибка при генерации")
+            await message.answer(f"Произошла ошибка: {e}")
+        finally:
+            set_generating(user_id, False)
+
+
+🔹 handlers\info.py:
+------------------------------------------------------------
+from aiogram import types
+from keyboards import get_main_keyboard
+from utils.user_state import set_user_state, STATE_MENU
+
+async def info(message: types.Message):
+    user_id = message.from_user.id
+    set_user_state(user_id, STATE_MENU)
+    await message.answer(
+        "ℹ️ Генерация логотипов через GPT-4o + DALL·E 3.\n\n"
+        "Жми '🎨 Генерация логотипа' и отправь идею.\n"
+        "Или выбери другой режим ниже 👇",
+        reply_markup=get_main_keyboard()
+    )
+
+🔹 handlers\prompt.py:
+------------------------------------------------------------
+from aiogram import types
+from aiogram.fsm.context import FSMContext
+from keyboards import get_back_keyboard
+from utils.user_state import set_user_state, STATE_GENERATE
+from utils.states import GenerationStates  # ← Не забудь импорт
+
+async def prompt_for_idea(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    set_user_state(user_id, STATE_GENERATE)
+    await state.set_state(GenerationStates.waiting_for_idea)  # ← ВАЖНО: установим FSM-состояние
+    await message.answer(
+        "✍️ Отправь идею логотипа (например: 'логотип для кофейни в минималистичном стиле')",
+        reply_markup=get_back_keyboard()
+    )
+
+
+🔹 handlers\start.py:
+------------------------------------------------------------
+from aiogram import types
+from keyboards import get_main_keyboard
+from utils.user_state import set_user_state, STATE_MENU
+
+async def start(message: types.Message):
+    user_id = message.from_user.id
+    set_user_state(user_id, STATE_MENU)
+    await message.answer(
+        "👋 Привет! Я помогу сгенерировать логотип. Выбери действие:",
+        reply_markup=get_main_keyboard()
+    )
+
+🔹 handlers\vectorize.py:
+------------------------------------------------------------
+from aiogram import types
+from aiogram.types import BufferedInputFile
+from keyboards import get_back_keyboard
+from utils.user_state import single_user_lock, is_generating, set_generating, set_user_state, STATE_VECTORIZE
+import logging
+import os
+import requests
+from dotenv import load_dotenv
+
+load_dotenv()
+
+VECTORIZE_USER = os.getenv("VECTORIZE_USER")
+VECTORIZE_PASS = os.getenv("VECTORIZE_PASS")
+
+async def ask_for_image(message: types.Message):
+    user_id = message.from_user.id
+    set_user_state(user_id, STATE_VECTORIZE)
+    await message.answer(
+        "📤 Пожалуйста, пришли изображение для векторизации (JPG, PNG и т.д.).",
+        reply_markup=get_back_keyboard()
+    )
+
+async def handle_vectorization_image(message: types.Message):
+    user_id = message.from_user.id
+
+    if is_generating(user_id):
+        await message.answer("⏳ Пожалуйста, дождитесь завершения векторизации.")
+        return
+
+    async with single_user_lock(user_id):
+        set_generating(user_id, True)
+        try:
+            photo = message.photo[-1]
+            file = await message.bot.get_file(photo.file_id)
+            downloaded_file = await message.bot.download_file(file.file_path)
+
+            temp_path = f"temp_{user_id}.jpg"
+            with open(temp_path, "wb") as f:
+                f.write(downloaded_file.read())
+
+            await message.answer("🔄 Векторизую изображение, подождите...")
+
+            with open(temp_path, "rb") as img:
+                response = requests.post(
+                    'https://ru.vectorizer.ai/api/v1/vectorize',
+                    files={'image': img},
+                    data={'mode': 'test'},
+                    auth=(VECTORIZE_USER, VECTORIZE_PASS)
+                )
+
+            os.remove(temp_path)
+
+            if response.status_code == 200:
+                svg_path = f"vectorized_{user_id}.svg"
+                with open(svg_path, "wb") as f:
+                    f.write(response.content)
+
+                with open(svg_path, "rb") as f:
+                    svg_file = BufferedInputFile(file=f.read(), filename="vectorized.svg")
+                    await message.answer_document(document=svg_file, caption="✅ Векторизация завершена!")
+                os.remove(svg_path)
+            else:
+                await message.answer(f"❌ Ошибка векторизации: {response.status_code}\n{response.text}")
+
+        except Exception as e:
+            logging.exception("Ошибка при векторизации")
+            await message.answer(f"⚠️ Произошла ошибка: {e}")
+        finally:
+            set_generating(user_id, False)
+
+
+🔹 handlers\__init__.py:
+------------------------------------------------------------
+
+
+🔹 services\logo_generator.py:
+------------------------------------------------------------
+import requests
+from io import BytesIO
+import asyncio
+from config import USE_PLACEHOLDER, OPENAI_API_KEY
+
+async def generate_image(prompt: str) -> BytesIO:
+    if USE_PLACEHOLDER:
+        await asyncio.sleep(2)
+        url = "https://picsum.photos/1024"
+        response = requests.get(url)
+        response.raise_for_status()
+        return BytesIO(response.content)
+
+    from openai import OpenAI
+    client = OpenAI(api_key=OPENAI_API_KEY)
+
+    chat = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": "Ты создаешь промпт для генерации логотипа через DALL·E 3."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+
+    prompt_dalle = chat.choices[0].message.content.strip()
+
+    image_response = client.images.generate(
+        model="dall-e-3",
+        prompt=prompt_dalle,
+        n=1,
+        size="1024x1024",
+        quality="standard",
+        style="vivid",
+    )
+
+    image_url = image_response.data[0].url
+    img_data = requests.get(image_url)
+    img_data.raise_for_status()
+
+    return BytesIO(img_data.content)
+
+
+🔹 services\__init__.py:
+------------------------------------------------------------
+
+
+🔹 utils\states.py:
+------------------------------------------------------------
+from aiogram.fsm.state import StatesGroup, State
+
+class GenerationStates(StatesGroup):
+    waiting_for_idea = State()
+
+
+🔹 utils\user_state.py:
+------------------------------------------------------------
+import asyncio
+from contextlib import asynccontextmanager
+
+user_locks = {}
+user_generation_flags = {}
+user_states = {}
+
+STATE_MENU = "menu"
+STATE_GENERATE = "generate"
+STATE_VECTORIZE = "vectorize"
+
+@asynccontextmanager
+async def single_user_lock(user_id: int):
+    lock = user_locks.setdefault(user_id, asyncio.Lock())
+    async with lock:
+        yield
+
+def is_generating(user_id):
+    return user_generation_flags.get(user_id, False)
+
+def set_generating(user_id, value: bool):
+    user_generation_flags[user_id] = value
+
+def set_user_state(user_id: int, state: str):
+    user_states[user_id] = state
+
+def get_user_state(user_id: int) -> str:
+    return user_states.get(user_id, STATE_MENU)
+
+
+🔹 utils\__init__.py:
+------------------------------------------------------------
+
